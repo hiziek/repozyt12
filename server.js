@@ -20,15 +20,25 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 let mongoDb = null;
 
 async function connectMongo() {
-    if (!MONGO_URL) return null;
+    try {
+        if (!MONGO_URL) {
+            console.log('⚠️ Brak MONGO_URL - działam bez bazy');
+            return null;
+        }
 
-    const client = new MongoClient(MONGO_URL);
-    await client.connect();
+        const client = new MongoClient(MONGO_URL);
+        await client.connect();
 
-    mongoDb = client.db();
-    console.log('✅ Połączono z MongoDB');
+        mongoDb = client.db();
+        console.log('✅ Połączono z MongoDB');
 
-    return mongoDb;
+        return mongoDb;
+
+    } catch (err) {
+        console.error('❌ MongoDB error:', err);
+        mongoDb = null;
+        return null;
+    }
 }
 
 const defaultPermissions = () => ({ canCreate: true, canEdit: true, canDelete: true });
@@ -65,16 +75,19 @@ const storage = {
     async init() {},
 
     async hasKey(key) {
+        if (!mongoDb) return false;
         const doc = await mongoDb.collection('state').findOne({ key });
         return !!doc;
     },
 
     async getState(key, fallback) {
+        if (!mongoDb) return fallback;
         const doc = await mongoDb.collection('state').findOne({ key });
         return doc ? doc.value : fallback;
     },
 
     async setState(key, value) {
+        if (!mongoDb) return;
         await mongoDb.collection('state').updateOne(
             { key },
             { $set: { value } },
