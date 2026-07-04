@@ -100,6 +100,8 @@ const storage = {
         fs.writeFileSync(fallbackStateFile, JSON.stringify(cache));
     }
 
+module.exports = (function () {
+
     return {
         label: 'file',
         async init() {},
@@ -118,7 +120,8 @@ const storage = {
             saveCache(cache);
         }
     };
-})();
+
+})(); 
 
 async function getCards() { return storage.getState('cards', { cards: [], nextId: 1 }); }
 async function saveCards(data) { return storage.setState('cards', data); }
