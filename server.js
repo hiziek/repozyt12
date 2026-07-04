@@ -2,7 +2,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { Pool } = require('pg');
+const { MongoClient } = require('mongodb');
+
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
@@ -11,9 +12,24 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const LEGACY_CARDS_FILE = path.join(DATA_DIR, 'cards.json');
 const LEGACY_USERS_FILE = path.join(DATA_DIR, 'users.json');
 const LEGACY_SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
-const DATABASE_URL = process.env.DATABASE_URL;
+const MONGO_URL = process.env.MONGO_URL;
+
 
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+
+let mongoDb = null;
+
+async function connectMongo() {
+    if (!MONGO_URL) return null;
+
+    const client = new MongoClient(MONGO_URL);
+    await client.connect();
+
+    mongoDb = client.db();
+    console.log('✅ Połączono z MongoDB');
+
+    return mongoDb;
+}
 
 const defaultPermissions = () => ({ canCreate: true, canEdit: true, canDelete: true });
 
@@ -43,40 +59,29 @@ function getLegacyOrDefault(filePath, fallback) {
     }
 }
 
-const storage = (() => {
-    if (DATABASE_URL) {
-        const pool = new Pool({
-            connectionString: DATABASE_URL,
-            ssl: { rejectUnauthorized: false }
-        });
-        return {
-            label: 'postgres',
-            async init() {
-                await pool.query(`
-                    CREATE TABLE IF NOT EXISTS app_state (
-                        key TEXT PRIMARY KEY,
-                        value JSONB NOT NULL
-                    )
-                `);
-            },
-            async hasKey(key) {
-                const result = await pool.query('SELECT 1 FROM app_state WHERE key = $1 LIMIT 1', [key]);
-                return result.rowCount > 0;
-            },
-            async getState(key, fallback) {
-                const result = await pool.query('SELECT value FROM app_state WHERE key = $1 LIMIT 1', [key]);
-                if (result.rowCount === 0) return fallback;
-                return result.rows[0].value ?? fallback;
-            },
-            async setState(key, value) {
-                await pool.query(
-                    `INSERT INTO app_state (key, value) VALUES ($1, $2::jsonb)
-                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-                    [key, JSON.stringify(value)]
-                );
-            }
-        };
+const storage = {
+    label: 'mongodb',
+
+    async init() {},
+
+    async hasKey(key) {
+        const doc = await mongoDb.collection('state').findOne({ key });
+        return !!doc;
+    },
+
+    async getState(key, fallback) {
+        const doc = await mongoDb.collection('state').findOne({ key });
+        return doc ? doc.value : fallback;
+    },
+
+    async setState(key, value) {
+        await mongoDb.collection('state').updateOne(
+            { key },
+            { $set: { value } },
+            { upsert: true }
+        );
     }
+};
 
     const fallbackStateFile = path.join(DATA_DIR, 'state.json');
     let stateCache = null;
@@ -482,10 +487,13 @@ app.use((err, req, res, next) => {
 });
 
 async function start() {
+    await connectMongo();
     await bootstrapState();
+
     const PORT = process.env.PORT || 3000;
+
     app.listen(PORT, () => {
-        console.log(`✅ Serwer na porcie ${PORT} (storage: ${storage.label})`);
+        console.log(`✅ Serwer na porcie ${PORT} (storage: mongodb)`);
     });
 }
 
